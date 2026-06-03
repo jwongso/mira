@@ -64,14 +64,14 @@ Every 3 seconds it broadcasts the last 10 seconds re-transcribed. This means:
 
 ## Tech stack
 
-| Component | Technology |
-|---|---|
-| ASR | wstream (whisper.cpp, ggml-small.en-q5_1) via WebSocket |
-| LLM | Qwen3-8B-Q5_K_M via llama.cpp (port 8080) |
-| TTS | Piper (en_US-lessac-medium or similar) |
-| Spotify | spotipy (Spotify Web API, OAuth2 PKCE) |
-| Orchestrator | Python 3.11+, asyncio, websockets, httpx |
-| Future tools | MCP protocol (astraea, home automation, etc.) |
+| Component | Technology | Default | User-configurable |
+|---|---|---|---|
+| ASR | wstream (whisper.cpp) via WebSocket | `ggml-small.en-q5_1.bin` | Any whisper.cpp GGUF model |
+| LLM | Ollama or any OpenAI-compatible server | `qwen3:0.6b` via Ollama | URL + model name in config |
+| TTS | Piper | `en_US-lessac-medium.onnx` | Any Piper voice model |
+| Spotify | spotipy (Spotify Web API, OAuth2) | - | Client ID/secret in config |
+| Orchestrator | Python 3.11+, asyncio, websockets, httpx | - | - |
+| Future tools | MCP protocol (astraea, home automation, etc.) | - | - |
 
 ---
 
@@ -175,16 +175,86 @@ voice sessions are transient.
 
 ---
 
-## Environment variables
+## Models
+
+### Whisper (ASR)
+
+wstream takes the model path as its first CLI argument. Default bundled model:
 
 ```
-WSTREAM_WS=ws://localhost:9001
-LLM_URL=http://localhost:8080/v1/chat/completions
-PIPER_MODEL=/path/to/models/en_US-lessac-medium.onnx
-SPOTIFY_CLIENT_ID=...
-SPOTIFY_CLIENT_SECRET=...
-SPOTIFY_REDIRECT_URI=http://localhost:8888/callback
-MIRA_WAKE_WORD=hey mira
+ggml-small.en-q5_1.bin   (~57MB) - recommended, already wstream's default
+```
+
+| Model file | Size | Notes |
+|---|---|---|
+| `ggml-tiny.en-q5_1.bin` | ~15MB | Fastest, use on very low-end hardware |
+| `ggml-base.en-q5_1.bin` | ~42MB | Good balance of speed and accuracy |
+| `ggml-small.en-q5_1.bin` | ~57MB | **Default** - reliable wake word detection |
+| `ggml-medium.en-q5_1.bin` | ~150MB | Better accuracy, noticeably slower |
+
+Download:
+
+```bash
+# via whisper.cpp script
+bash /path/to/whisper.cpp/models/download-ggml-model.sh small.en
+
+# or direct from HuggingFace
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin \
+  -O ~/.mira/models/whisper/ggml-small.en-q5_1.bin
+```
+
+English-only models (`.en`) are faster and more accurate for English than the multilingual equivalents.
+Set `whisper_model` in config to switch.
+
+### LLM
+
+Default: Ollama with `qwen3:0.6b` (~400MB). Install:
+
+```bash
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama pull qwen3:0.6b
+```
+
+Set `llm_url` and `llm_model` in config to use a different Ollama model or point
+to an existing llama.cpp server (any OpenAI-compatible endpoint works).
+
+### Piper TTS voice
+
+```bash
+# download voice model pair (.onnx + .onnx.json)
+wget https://github.com/rhasspy/piper/releases/download/2023.11.14-2/en_US-lessac-medium.onnx
+wget https://github.com/rhasspy/piper/releases/download/2023.11.14-2/en_US-lessac-medium.onnx.json
+```
+
+---
+
+## Configuration (mira.toml)
+
+```toml
+[wstream]
+ws_url        = "ws://localhost:9001"      # wstream WebSocket address
+whisper_model = "~/.mira/models/whisper/ggml-small.en-q5_1.bin"
+
+[llm]
+url   = "http://localhost:11434/v1/chat/completions"  # Ollama default
+model = "qwen3:0.6b"
+# To use llama.cpp instead:
+# url   = "http://localhost:8080/v1/chat/completions"
+# model = "qwen3"
+
+[tts]
+piper_bin   = "piper"
+voice_model = "~/.mira/models/piper/en_US-lessac-medium.onnx"
+
+[wake]
+word    = "hey mira"
+timeout = 4.0   # seconds to wait for utterance to stabilise after wake word
+
+[spotify]
+client_id     = ""
+client_secret = ""
+redirect_uri  = "http://localhost:8888/callback"
+token_cache   = "~/.mira/spotify_token"
 ```
 
 ---
@@ -192,11 +262,26 @@ MIRA_WAKE_WORD=hey mira
 ## Running
 
 ```bash
-# Terminal 1 - start wstream on port 9001
-WSTREAM_PORT=9001 ./stream
+# Terminal 1 - start wstream on port 9001 with default model
+WSTREAM_PORT=9001 ./stream ~/.mira/models/whisper/ggml-small.en-q5_1.bin
 
 # Terminal 2 - start Mira
 python mira.py
+
+# Or with a custom config
+python mira.py --config /path/to/mira.toml
 ```
 
 Later: both managed by systemd user services.
+
+## wstream changes needed
+
+**None for Phase 1.** wstream already supports:
+- Custom model path via first CLI argument
+- Custom port via `WSTREAM_PORT` env var
+- Non-browser clients (empty Origin header is whitelisted)
+
+Possible future additions (not required now):
+- `{"type": "silence"}` event after N seconds of no speech - cleaner than timing hack
+- `--lang` CLI arg for multilingual support (currently hardcoded English)
+- `--vad` flag to enable VAD mode without recompiling
