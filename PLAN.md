@@ -8,9 +8,58 @@ Wake word: **"Hey Mira"**
 ## What Mira is
 
 A privacy-first voice assistant that runs on your own machine with no cloud dependency.
-Speech recognition via whisper.cpp (wstream), reasoning via a local LLM (Qwen3-8B),
-and text-to-speech via Piper. External services (Spotify, etc.) are integrated via their
+Speech recognition via whisper.cpp (wstream), reasoning via a local LLM, and
+text-to-speech via Piper. External services (Spotify, etc.) are integrated via their
 own APIs - the LLM decides which action to take from the voice command.
+
+---
+
+## What differentiates Mira
+
+Most local voice assistant projects on GitHub are 200-line glue scripts: whisper
+transcribes, one LLM replies, piper speaks. Mira is built differently in three ways.
+
+### 1. MCP as the native skill system
+
+Every other voice assistant has a custom plugin/skill format. Mira's skills ARE MCP
+servers. The entire MCP ecosystem - GitHub, Slack, Google Drive, home automation,
+and domain-specialist servers like astraea - becomes a Mira skill automatically.
+Install a new MCP server, Mira gains the capability. No code changes, no skill
+manifest files, no custom API to learn.
+
+### 2. Expert routing instead of one LLM for everything
+
+Mira routes each question to the right expert rather than asking one general model
+about everything:
+
+```
+"what are my rights if my landlord won't fix the heating?"
+  -> astraea nz-tenancy MCP (31,000 Tribunal decisions + live legislation)
+
+"play something chill"
+  -> Spotify handler
+
+"what time is it in Berlin?"
+  -> general LLM
+```
+
+Specialized sources give qualitatively better answers than a general LLM guessing.
+No other local voice assistant does domain-specialist routing.
+
+### 3. Network-transparent ASR
+
+wstream runs as a WebSocket server. Mira can run on a dedicated machine (server,
+Raspberry Pi) while you speak from a phone browser, another computer, or any device
+on the local network. The microphone and the brain are decoupled. Most projects
+hardwire them to the same machine.
+
+### 4. Built-in observability and benchmarking
+
+Every interaction is logged with full telemetry - latency per component, raw
+transcription windows, intent classification result, plugin outcome. Replay any
+session with different settings. Benchmark whisper models, LLMs, and TTS voices
+against each other. No other local voice assistant ships this out of the box.
+(See Observability section below.)
 
 ---
 
@@ -112,6 +161,7 @@ Goal: "Hey Mira, what time is it?" works end to end.
 - [ ] Piper TTS wrapper (`tts.py`)
 - [ ] LLM wrapper with conversation history (`llm.py`)
 - [ ] Main state machine (`mira.py`)
+- [ ] Session logger + latency timer (`observe.py`)
 - [ ] Basic general Q&A working via voice
 
 ### Phase 2 - Spotify integration
@@ -125,29 +175,39 @@ Goal: "Hey Mira, play some jazz" and "Hey Mira, skip this" work.
 - [ ] Playlist support: "play my workout playlist"
 - [ ] Spoken feedback: "Playing Radiohead" / "Paused" / "Volume set to 60"
 
-### Phase 3 - Tool expansion via MCP
+### Phase 3 - Observability CLI
+
+Goal: `mira stats`, `mira latency`, `mira bench` all work.
+
+- [ ] `cli.py`: stats, log, latency, feedback, replay commands
+- [ ] `bench/whisper.py`: compare whisper models on audio samples
+- [ ] `bench/intent.py`: accuracy benchmark against labeled intent samples
+- [ ] `bench/latency.py`: end-to-end latency with fixed prompts
+- [ ] `bench/wakeword.py`: false positive/negative rate analysis
+- [ ] `--debug` live mode (prints all windows, intent reasoning, LLM prompt)
+
+### Phase 4 - MCP tool expansion
 
 Goal: "Hey Mira, ask the tenancy assistant about bond refunds" works.
 
 - [ ] MCP client adapter in `tools/`
 - [ ] Connect to astraea MCP servers (nz-tenancy, nz-building)
-- [ ] Intent routing: music / general / legal / tool
-- [ ] Plugin registry so new tools can be added without touching orchestrator
+- [ ] Intent routing: music / general / legal / mcp-tool
+- [ ] Plugin registry so new tools register without touching orchestrator
 
-### Phase 4 - Polish and reliability
+### Phase 5 - Polish and reliability
 
 - [ ] Graceful handling of LLM timeout, Spotify auth expiry, wstream disconnect
 - [ ] Auto-reconnect to wstream WebSocket
 - [ ] "Hey Mira, stop" interrupt - cancel in-progress TTS
-- [ ] Config file (TOML) instead of env vars
-- [ ] Logging to ~/.mira/mira.log
 - [ ] systemd user service for always-on operation
 
-### Phase 5 - Mac Mini M4 Pro (August 2026)
+### Phase 6 - Mac Mini M4 Pro (August 2026)
 
-- [ ] Re-benchmark with M4 Pro GPU offload - may allow larger LLM (14B/30B)
-- [ ] Evaluate faster TTS models (kokoro, StyleTTS2)
-- [ ] Consider enabling wstream VAD for cleaner utterance detection
+- [ ] Re-benchmark all components with M4 Pro GPU offload
+- [ ] Evaluate larger LLM (14B/30B) for intent quality
+- [ ] Evaluate faster TTS (kokoro, StyleTTS2)
+- [ ] Consider wstream VAD for cleaner utterance detection
 - [ ] Homebridge / Home Assistant integration (lights, switches)
 
 ---
@@ -255,6 +315,206 @@ client_id     = ""
 client_secret = ""
 redirect_uri  = "http://localhost:8888/callback"
 token_cache   = "~/.mira/spotify_token"
+```
+
+---
+
+## Observability, debugging and benchmarking
+
+This is where Mira goes beyond every comparable project. Built in from day one,
+not bolted on later.
+
+### Session log
+
+Every interaction is written to `~/.mira/sessions/YYYYMMDD.jsonl`. One JSON object
+per interaction, appended in real time:
+
+```json
+{
+  "id": "uuid",
+  "ts": "2026-06-03T21:14:00.123Z",
+  "raw_windows": [
+    "hey mira play some jazz",
+    "hey mira play some jazz music",
+    "hey mira play some jazz music please"
+  ],
+  "wake_window": "hey mira play some jazz",
+  "utterance": "play some jazz music please",
+  "intent": {
+    "type": "spotify",
+    "action": "search_and_play",
+    "query": "jazz",
+    "type_arg": "playlist",
+    "confidence": 0.94
+  },
+  "plugin": "spotify",
+  "plugin_result": {
+    "success": true,
+    "track": "Kind of Blue - Miles Davis"
+  },
+  "llm_response": "Playing Kind of Blue by Miles Davis.",
+  "tts_text": "Playing Kind of Blue by Miles Davis.",
+  "latency_ms": {
+    "wake_to_utterance": 4012,
+    "intent_classify": 218,
+    "plugin_execute": 387,
+    "llm_generate": null,
+    "tts_synthesize": 291,
+    "tts_play": 3400,
+    "total_end_to_end": 8308
+  },
+  "outcome": "success",
+  "feedback": null
+}
+```
+
+`feedback` is set when the user says "hey mira that was wrong" or via CLI.
+`llm_generate` is null for pure plugin actions (Spotify play/pause); filled for
+responses that go through the LLM.
+
+### Latency breakdown
+
+Mira measures every component individually so you know exactly where time is spent:
+
+| Metric | What it covers |
+|---|---|
+| `wake_to_utterance` | Time from first wake-word window to utterance collected |
+| `intent_classify` | LLM call to classify intent and extract action |
+| `plugin_execute` | Spotify API call / MCP tool call / external service |
+| `llm_generate` | LLM call for general conversational response |
+| `tts_synthesize` | Piper synthesis to raw audio |
+| `tts_play` | Audio playback duration |
+| `total_end_to_end` | Wake word detected to first audio output |
+
+### CLI tools (`mira` command)
+
+```bash
+# Show stats for recent sessions
+mira stats
+mira stats --since 7d
+
+# Show latency percentiles per component
+mira latency
+mira latency --since 24h --percentiles 50,95,99
+
+# Show intent classification breakdown
+mira intents --since 7d
+
+# Replay a past interaction (re-runs through current model/settings)
+mira replay <interaction-id>
+mira replay <interaction-id> --llm-model qwen3:1.7b
+
+# Mark an interaction as good or bad
+mira feedback <interaction-id> good
+mira feedback <interaction-id> bad --note "wrong artist"
+
+# List interactions with optional filter
+mira log --intent spotify --since 24h
+mira log --outcome failure
+```
+
+### Benchmark suite (`mira bench`)
+
+```bash
+# Compare whisper models on a set of audio samples
+mira bench whisper --samples ~/.mira/bench/audio/ --models tiny.en,base.en,small.en
+
+# Compare LLMs for intent classification accuracy
+mira bench intent --samples ~/.mira/bench/intent_samples.json \
+                  --models qwen3:0.6b,qwen3:1.7b
+
+# Measure end-to-end latency with fixed prompts
+mira bench latency --runs 10
+
+# Wake word false positive rate (feed non-wake audio, count triggers)
+mira bench wakeword --audio ~/.mira/bench/background_audio/
+```
+
+Benchmark results written to `~/.mira/bench/results/` as JSON + printed as a table.
+
+Sample intent benchmark file (`intent_samples.json`):
+
+```json
+[
+  {"utterance": "play some jazz",              "expected": {"type": "spotify", "action": "search_and_play"}},
+  {"utterance": "skip this song",              "expected": {"type": "spotify", "action": "skip"}},
+  {"utterance": "what time is it in Tokyo",    "expected": {"type": "general"}},
+  {"utterance": "pause the music",             "expected": {"type": "spotify", "action": "pause"}},
+  {"utterance": "what are my rights as tenant","expected": {"type": "mcp", "server": "nz-tenancy"}}
+]
+```
+
+Accuracy, latency mean/p95, and per-sample diff printed after each run.
+
+### Wake word analysis
+
+Every transcription window is logged (not just the ones with wake words). This lets
+you analyze:
+- Which phrasings of "hey mira" whisper transcribes reliably vs. incorrectly
+- False trigger rate (how often a non-wake phrase accidentally triggers)
+- Which words get dropped or mangled by the whisper model
+
+```bash
+mira analyze wakeword --since 7d
+# Shows: trigger rate, false positive rate, transcription variants seen
+```
+
+### Live debug mode
+
+```bash
+mira --debug
+```
+
+Prints every transcription window received from wstream, the intent classification
+reasoning, plugin calls made, and exact LLM prompt sent. Equivalent to astraea's
+`context_debug` SSE event - full transparency into every step.
+
+### Improvement loop
+
+The observability data drives a concrete improvement cycle:
+
+```
+1. Run mira stats / mira latency   -> identify slow components
+2. Run mira bench whisper          -> find faster/more accurate ASR model
+3. Run mira bench intent           -> validate intent accuracy before deploying new LLM
+4. Mark bad interactions           -> build ground truth dataset
+5. Re-run mira bench intent        -> confirm improvement
+```
+
+No other local voice assistant ships this workflow. Most have zero structured logging.
+
+---
+
+## Project layout
+
+```
+mira/
+  mira.py              - main orchestrator entry point
+  config.py            - load and validate mira.toml
+  wake.py              - wake word detection and utterance collection
+  tts.py               - Piper TTS wrapper (speak, play_ding)
+  llm.py               - LLM chat wrapper, conversation history
+  intent.py            - LLM-based intent classifier
+  observe.py           - session logger, latency timer, interaction record
+  cli.py               - mira stats / bench / log / replay / feedback commands
+  plugins/
+    __init__.py        - plugin registry
+    spotify.py         - Spotify handler
+  tools/
+    __init__.py        - MCP tool adapters
+  bench/
+    __init__.py
+    whisper.py         - whisper model benchmark runner
+    intent.py          - intent classification benchmark runner
+    latency.py         - end-to-end latency benchmark
+    wakeword.py        - wake word false positive/negative analysis
+  models/              - Piper voice model files (.onnx + .json)
+  sounds/
+    ding.wav           - wake acknowledgement sound
+  PLAN.md
+  README.md
+  requirements.txt
+  mira.toml.example
 ```
 
 ---
