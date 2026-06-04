@@ -243,10 +243,13 @@ plugins, MCP integration, or benchmarking tools.
 
 **Milestone 1** - Speed
 
-> "Hey Mira, pause music" responds in less than 1.5 seconds after I stop speaking.
+> `response_latency` for a hard-rule command ("Hey Mira, pause music") is under 1.5
+> seconds. `response_latency` = utterance finalized to first audio output (what the
+> system controls). This is distinct from `perceived_latency` (user stops speaking to
+> first audio output), which includes utterance collection time (~700ms minimum).
+> For LLM-routed commands, 2-3s response_latency is acceptable.
 
-This validates utterance stabilizer quality, hard command routing (no LLM needed),
-and TTS startup latency.
+This validates hard command routing (no LLM needed) and TTS startup latency.
 
 **Milestone 2** - Routing accuracy
 
@@ -278,6 +281,7 @@ Goal: "Hey Mira, what time is it?" works end to end.
 - [ ] LLM wrapper with conversation history (`llm.py`)
 - [ ] Main state machine (`mira.py`)
 - [ ] JSONL session logger + latency timer (`observe.py`)
+- [ ] Mute transcription processing during TTS playback (prevents echo/ghost triggers)
 - [ ] Basic general Q&A working via voice
 
 ### Phase 1.5 - Interaction reliability
@@ -329,6 +333,8 @@ Goal: "Hey Mira, ask the tenancy assistant about bond refunds" works.
 - [ ] Connect to astraea MCP servers (nz-tenancy, nz-building)
 - [ ] Intent routing: music / general / legal / mcp-tool
 - [ ] Plugin registry so new tools register without touching orchestrator
+- [ ] Voice summarization for MCP responses - MCP tools return 500-2000 word answers;
+  condense to 2-3 sentences before TTS (`_summarize_for_voice(response, question)`)
 
 ### Phase 5 - Observability and benchmarking
 

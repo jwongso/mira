@@ -1,0 +1,7 @@
+.venv/
+poc_recordings/
+__pycache__/
+*.pyc
+.env
+mira.toml
+*.log

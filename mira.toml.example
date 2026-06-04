@@ -1,0 +1,10 @@
+[asr]
+bin   = "~/proj/priv/wstream/build-cpu/bin/mira-poc"
+model = "~/proj/priv/wstream/models/ggml-small-q8_0.bin"
+
+[llm]
+url   = "http://localhost:8080/v1/chat/completions"
+model = "Qwen_Qwen3-8B-Q5_K_M.gguf"
+
+[tts]
+model = "~/.mira/models/piper/en_US-lessac-medium.onnx"
