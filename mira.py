@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import config as cfg_module
 import spotify_tool
+import tools as _tools
+from memory import Memory
 from intent import classify_hard, execute_hard
 
 _DUP_WORD_RE = re.compile(r'\b(\w+)\s+\1\b', re.IGNORECASE)
@@ -111,6 +113,10 @@ async def run(cfg, debug: bool) -> None:
     if cfg.spotify_id:
         spotify_tool.init(cfg.spotify_id, cfg.spotify_secret, cfg.spotify_redirect)
         print("[mira]  Spotify configured")
+    mem = Memory()
+    if mem.ready:
+        _tools.init_memory(mem)
+        print("[mira]  Memory ready (Qdrant)")
     print("[mira]  loading TTS model...")
     speak("", cfg.tts_model)  # pre-load ONNX
 
